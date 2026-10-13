@@ -2,7 +2,7 @@ services:
   roll-rush:
     build: .
     ports:
-      - "8080:8080"
+      - "8079:8080"
     restart: unless-stopped
     environment:
       ROOM_COUNT: "3"
