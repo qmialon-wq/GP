@@ -1,3 +1,4 @@
+import { logoAchievements } from './logo-catalog.js';
 import { legendaryPilots } from './legendary-catalog.js';
 // Shared display rules. Currency, ownership and rewards are enforced by the server.
 export const shopItems = [
@@ -189,6 +190,8 @@ shopItems.push(
   {id:'title-horizons',type:'title',name:'Souverain des Horizons',description:'Vainqueur Horizons 200cc.',price:5000,level:12,achievement:'horizons-200'}
 );
 
+achievements.push(...logoAchievements);
+
 export function achievementProgress(achievement,metrics) {
   return achievement.requirements ? achievement.requirements.filter(r=>(metrics[r.metric]||0)>=r.goal).length : metrics[achievement.metric]||0;
 }
@@ -197,10 +200,10 @@ export function levelProgress(xp) {
   const floor=250*(level-1)*level/2,next=250*level*(level+1)/2;
   return {level,current:xp-floor,required:next-floor,next};
 }
-export function raceReward(place,difficulty='100',mode='race') {
+export function raceReward(place,difficulty='100',mode='race',itemBonus=0) {
   const multiplier=({'50':1,'100':1.15,'150':1.35,'200':1.6})[difficulty] || 1;
   const duration=mode==='endurance'?4:1;
-  return {coins:Math.round((10+(12-place)*4)*multiplier)*duration,xp:Math.round((70+(12-place)*12)*multiplier)*duration};
+  return {coins:Math.round((10+(12-place)*4)*multiplier)*duration+itemBonus,xp:Math.round((70+(12-place)*12)*multiplier)*duration};
 }
 export function cupReward(place,difficulty='100') {
   const multiplier=({'50':1,'100':1.15,'150':1.35,'200':1.6})[difficulty] || 1;
@@ -210,7 +213,7 @@ export function itemFor(type,target) {return shopItems.find(i=>i.type===type&&i.
 export function ownsSelection(progression,type,target) {
   const item=itemFor(type,target);return !item || Boolean(progression?.owned.includes(item.id));
 }
-export function paintChair(chair,paintId) {
+export function paintChair(chair,paintId,style=null) {
   const paint=shopItems.find(i=>i.type==='paint'&&i.id===paintId);
-  return paint ? {...chair,color:paint.color} : chair;
+  return {...chair,color:style?.color || paint?.color || chair.color,logoId:style?.logoId || null};
 }

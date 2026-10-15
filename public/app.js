@@ -15,7 +15,7 @@ import { createRaceWorld, animateWorld } from './race-world.js';
 import { createRaceEffects, attachContactShadow } from './race-effects.js';
 import { RoomEnvironment } from './vendor/RoomEnvironment.js';
 import { paintChair } from './progression.js';
-import { createPortal } from './portal.js';
+import { createPortal, api } from './portal.js';
 
 const $ = selector => document.querySelector(selector);
 const lobby = $('#lobby'), race = $('#race'), result = $('#result'), canvas = $('#game');
@@ -27,7 +27,7 @@ const selection = createSelection(choices => {
     if (state.lobby.hostId === playerId && ['race','endurance'].includes(state.lobby.mode)) data.trackId = choices.trackId;
     send('configure',data);
   }
-});
+},async data=>{const response=await api('/api/customization',data);portal.setUser(response.user);});
 function updateFavorite() {
   const favorite = portal?.user?.favoriteChairIds.includes(selection.choices().chairId) || false;
   $('#favoriteChair').setAttribute('aria-pressed',String(favorite));
@@ -131,14 +131,46 @@ function disposeObject(object) {
   object.removeFromParent();
   geometries.forEach(g => g.dispose()); materials.forEach(m => { for (const value of Object.values(m)) if (value?.isTexture && !value.userData.shared) textures.add(value); m.dispose(); }); textures.forEach(t => t.dispose());
 }
+function updateLightningAura(object, pose, now) {
+  let aura = object.userData.lightningAura;
+  if (!aura) {
+    aura = new THREE.Group();
+    aura.name = 'lightning-aura';
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(1.45, .045, 6, 32),
+      new THREE.MeshBasicMaterial({color:'#ffe45c', transparent:true, opacity:.9, blending:THREE.AdditiveBlending, depthWrite:false})
+    );
+    ring.rotation.x = Math.PI / 2;
+    aura.add(ring);
+    const boltMaterial = new THREE.LineBasicMaterial({color:'#fff9b0', transparent:true, opacity:.95, blending:THREE.AdditiveBlending});
+    for (let i=0;i<4;i++) {
+      const angle=i*Math.PI/2;
+      const points=[];
+      for (let j=0;j<5;j++) {
+        const radius=.65+j*.25, jitter=(j%2?.16:-.12);
+        points.push(new THREE.Vector3(Math.cos(angle)*radius+jitter, .35+j*.38, Math.sin(angle)*radius-jitter));
+      }
+      aura.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),boltMaterial));
+    }
+    object.add(aura); object.userData.lightningAura=aura;
+  }
+  const active = pose.lightning > .02;
+  aura.visible=active;
+  if (!active) return;
+  const pulse=1+Math.sin(now*.018)*.12;
+  aura.scale.setScalar(pulse);
+  aura.rotation.y=now*.002;
+  aura.children[0].material.opacity=.62+Math.sin(now*.025)*.25;
+}
 function syncRacers(now, dt) {
   for (const r of state.racers) {
     let object = world.get(r.id);
-    if (object && (object.userData.paintId !== (r.paintId || null) || object.userData.chairId !== r.chairId || object.userData.pilotId !== (r.pilotId || pilots[0].id))) { disposeObject(object); world.delete(r.id); object = null; }
+    if (object && (object.userData.paintId !== (r.paintId || null) || object.userData.appearanceKey !== `${r.customColor||''}/${r.logoId||''}` || object.userData.chairId !== r.chairId || object.userData.pilotId !== (r.pilotId || pilots[0].id))) { disposeObject(object); world.delete(r.id); object = null; }
     if (!object) {
-      if (r.id === playerId && preparedChair?.userData.chairId === r.chairId && preparedChair.userData.pilotId === r.pilotId) { object = preparedChair; preparedChair = null; }
-      else object = makeChair(THREE, paintChair(state.chairs.find(c => c.id === r.chairId) || state.chairs[0],r.paintId), pilots.find(p => p.id === r.pilotId) || pilots[0], { race: true, rival: r.id !== playerId });
+      if (r.id === playerId && preparedChair?.userData.chairId === r.chairId && preparedChair.userData.pilotId === r.pilotId && preparedChair.userData.appearanceKey === `${r.customColor||''}/${r.logoId||''}`) { object = preparedChair; preparedChair = null; }
+      else object = makeChair(THREE, paintChair(state.chairs.find(c => c.id === r.chairId) || state.chairs[0],r.paintId,{color:r.customColor,logoId:r.logoId}), pilots.find(p => p.id === r.pilotId) || pilots[0], { race: true, rival: r.id !== playerId });
       object.userData.paintId = r.paintId || null;
+      object.userData.appearanceKey = `${r.customColor||''}/${r.logoId||''}`;
       object.userData.pose = {};
       object.userData.isPlayer = r.id === playerId;
       object.traverse(child => { if (child.isMesh) child.castShadow = r.id === playerId; });
@@ -150,6 +182,7 @@ function syncRacers(now, dt) {
       object.position.set(pose.x, .41, pose.z);
       object.rotation.y = modelYaw(pose.heading) + (pose.spin>0 ? (1-pose.spin/.5)*Math.PI*2 : 0);
       animateChair(object, pose, dt, now);
+      updateLightningAura(object, pose, now);
     }
   }
   for (const [id, object] of world) if (!state.racers.some(r => r.id === id)) {
@@ -302,8 +335,10 @@ async function launchRace() {
     if (roomId !== currentRoom || socket?.readyState !== 1) return;
     buildWorld(); buildTrack(state.lobby.track);
     if (preparedChair) disposeObject(preparedChair);
-    preparedChair = makeChair(THREE,paintChair(state.chairs.find(c=>c.id===choices.chairId),portal.user?.progression?.paint),pilots.find(p=>p.id===choices.pilotId),{race:true});
+    const style=portal.user?.progression?.chairStyles?.[choices.chairId];
+    preparedChair = makeChair(THREE,paintChair(state.chairs.find(c=>c.id===choices.chairId),portal.user?.progression?.paint,portal.user?.progression?.chairStyles?.[choices.chairId]),pilots.find(p=>p.id===choices.pilotId),{race:true});
     preparedChair.traverse(o=>{if(o.isMesh)o.castShadow=true;});
+    preparedChair.userData.appearanceKey=`${style?.color||''}/${style?.logoId||''}`;
     scene.add(preparedChair); await renderer.compileAsync(scene,camera); preparedChair?.removeFromParent();
     if (roomId === currentRoom && state.lobby.hostId === playerId && socket?.readyState === 1) send('start');
   } catch (error) {
