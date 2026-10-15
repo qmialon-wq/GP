@@ -16,8 +16,11 @@ import { createRaceEffects, attachContactShadow } from './race-effects.js';
 import { RoomEnvironment } from './vendor/RoomEnvironment.js';
 import { paintChair } from './progression.js';
 import { createPortal, api } from './portal.js';
+import { createAudioManager } from './audio.js';
 
 const $ = selector => document.querySelector(selector);
+const audio = createAudioManager();
+addEventListener('pointerdown',()=>audio.unlock(),{passive:true});
 const lobby = $('#lobby'), race = $('#race'), result = $('#result'), canvas = $('#game');
 let socket, state, playerId, currentRoom = null, portal;
 const selection = createSelection(choices => {
@@ -71,6 +74,7 @@ function connect() {
     if (message.type !== 'state' || message.lobby.roomId !== currentRoom) return;
     const reset = state?.lobby.raceId !== message.lobby.raceId;
     state = { ...state, ...message };
+    audio.observe(state,playerId);
     state.lobby.track = state.tracks.find(track => track.id === state.lobby.trackId);
     snapshots.push(state, performance.now());
     if (reset) { cameraReady = false; finishPresentedAt = null; effects?.reset(); }
@@ -226,10 +230,12 @@ function draw3D(now) {
   syncRacers(now, dt);
   if(state.items?.enabled && !itemVisuals)itemVisuals=createItemVisuals(scene);
   itemVisuals?.update(state.items,now);
+  audio.observeItems(state.items);
   if(state.lobby.mode==='endurance'&&pitTrack!==state.lobby.trackId){if(pitVisuals)disposeObject(pitVisuals);pitVisuals=createPitVisuals(createCourse(state.lobby.track));pitTrack=state.lobby.trackId;scene.add(pitVisuals);}
   if(pitVisuals)pitVisuals.visible=state.lobby.mode==='endurance';
   animateWorld(environment, now, dt); effects.update(world, dt);
   const object = world.get(playerId);
+  audio.updateEngine(object?.userData.pose.speed || 0, Boolean(object && state.lobby.phase === 'racing'));
   if (object) {
     const heading = object.userData.pose.heading;
     const speed = Math.abs(object.userData.pose.speed || 0);
@@ -359,7 +365,7 @@ $('#againButton').onclick = returnToRoom;
 const enduranceUI=createEnduranceUI((type,data)=>send(type,data));
 const itemUI=createItemsUI(()=>send('use_item'));
 portal = createPortal({
-  onView(page) {selection.setVisible(page==='garage');if(page!=='race'){cancelAnimationFrame(raf);itemUI.clear();enduranceUI.clear();}},
+  onView(page) {audio.setContext(page);selection.setVisible(page==='garage');if(page!=='race'){cancelAnimationFrame(raf);itemUI.clear();enduranceUI.clear();}},
   onSignedIn(user) {selection.setChoices(user);connect();},
   onSignedOut() {const old=socket;socket=null;old?.close();currentRoom=null;playerId=null;stopRace();portal.setOnline(false);},
   onProfile(user) {selection.setProgression(user?.progression || null);updateFavorite();},
